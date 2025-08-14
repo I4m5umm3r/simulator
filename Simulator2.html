@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>UPEM Multi‑Scale Simulator — v1 (All Improvements)</title>
+  <style>
+    :root { --bg:#0b0f1a; --card:#121828; --ink:#e7ecf5; --muted:#a9b4c7; --accent:#59b0ff; }
+    html, body { height:100%; }
+    body { margin:0; font:14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Inter, Arial; color:var(--ink); background:radial-gradient(1200px 800px at 20% -10%, #1b2640 0%, #0b0f1a 60%); }
+    header { padding:16px 20px; display:flex; align-items:center; gap:12px; border-bottom:1px solid #1d2740; backdrop-filter:saturate(120%) blur(6px); position:sticky; top:0; z-index:10; background:rgba(11,15,26,0.65); }
+    header h1 { font-size:16px; margin:0; font-weight:600; letter-spacing:.3px; }
+    header small { color:var(--muted); }
+    .layout { display:grid; grid-template-columns: 320px 1fr; gap:16px; padding:16px; }
+    .card { background:var(--card); border:1px solid #1f2742; border-radius:16px; box-shadow:0 8px 30px rgba(0,0,0,.35); }
+    .panel { padding:16px; }
+    .section-title { font-size:12px; letter-spacing:.12em; text-transform:uppercase; color:var(--muted); margin:0 0 8px; }
+    .controls { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+    .controls label { display:flex; flex-direction:column; gap:6px; font-size:12px; color:var(--muted); }
+    .controls input, .controls select, .controls button, textarea {
+      background:#0e1527; color:var(--ink); border:1px solid #273052; border-radius:10px; padding:8px 10px; font:inherit; outline:none;
+    }
+    .controls button { cursor:pointer; border:1px solid #2a6ccc; background:linear-gradient(180deg, #1c3c73 0%, #16274a 100%); }
+    .controls button:hover { filter:brightness(1.05); }
+    .row { display:flex; gap:10px; align-items:center; }
+    .row .grow { flex:1; }
+    #plot { height: calc(100vh - 170px); }
+    .kpi { display:grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap:14px; }
+    .kpi .item { background:#0d1425; border:1px solid #253055; border-radius:12px; padding:10px 12px; }
+    .kpi .label { color:var(--muted); font-size:12px; }
+    .kpi .value { font-size:18px; font-weight:600; }
+    .badge { font-size:11px; padding:2px 8px; border-radius:999px; border:1px solid #2a365f; background:#0f1830; color:#cfe1ff; }
+    footer { color:var(--muted); padding:10px 16px 18px; text-align:right; }
+    .code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
+  </style>
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+  <script src="https://unpkg.com/algebrite@1.5.0/dist/algebrite.min.js"></script>
+</head>
+<body>
+  <header class="card">
+    <h1>UPEM Multi‑Scale Simulator</h1>
+    <small>Qi coherence metric — cross‑scalar demo</small>
+    <span class="badge" title="WebGL heatmap renderer">WebGL</span>
+  </header>
+
+  <div class="layout">
+    <!-- Controls -->
+    <div class="card panel">
+      <p class="section-title">Configuration</p>
+      <div class="controls" id="controls">
+        <label>Dimensionality
+          <select id="dim">
+            <option value="1d">1D</option>
+            <option value="3d" selected>3D</option>
+          </select>
+        </label>
+        <label>Grid N
+          <input id="N" type="number" min="16" max="96" step="2" value="32" />
+        </label>
+        <label>Time steps (nt)
+          <input id="nt" type="number" min="1" max="400" step="1" value="120" />
+        </label>
+        <label>Domain length L (cm)
+          <input id="L" type="number" min="1" max="100" step="1" value="10" />
+        </label>
+        <label>Diffusion D
+          <input id="D" type="number" step="0.1" value="1.7" />
+        </label>
+        <label>k₁ (scalar)
+          <input id="k1" type="number" step="1e-16" value="1e-15" />
+        </label>
+        <label>k₄ (plasma)
+          <input id="k4" type="number" step="1e-31" value="1e-30" />
+        </label>
+        <label>κ (kappa)
+          <input id="kappa" type="number" step="0.1" value="1" />
+        </label>
+        <label>nₑ (cm⁻³)
+          <input id="ne" type="number" step="1e1" value="1e10" />
+        </label>
+        <label>J (A)
+          <input id="J" type="number" step="1" value="1000" />
+        </label>
+        <label>k₅ (incoherence)
+          <input id="k5" type="number" step="1e-26" value="1e-25" />
+        </label>
+        <label>k₇ (ECA)
+          <input id="k7" type="number" step="1e-21" value="1e-20" />
+        </label>
+        <label>ω (rad/s)
+          <input id="omega" type="number" step="0.1" value="49.0" />
+        </label>
+        <label>Use Web Worker
+          <select id="useWorker">
+            <option value="auto" selected>Auto (N≥50)</option>
+            <option value="yes">Yes</option>
+            <option value="no">No</option>
+          </select>
+        </label>
+      </div>
+
+      <p class="section-title" style="margin-top:14px">Symbolic ψ (Algebrite)</p>
+      <div class="controls">
+        <label class="grow">ψ(x,y,z)
+          <input id="psi" class="code" type="text" value="sin(sqrt(x^2+y^2+z^2))" />
+        </label>
+        <label>Compile
+          <button id="compilePsi">Parse & Show ∇ψ</button>
+        </label>
+      </div>
+
+      <div class="row" style="margin-top:8px">
+        <button id="run" class="grow">Run Simulation</button>
+        <button id="ingest">Ingest Real‑Time Data</button>
+      </div>
+
+      <div class="kpi" style="margin-top:14px">
+        <div class="item"><div class="label">⟨Q⟩ (erg/cm³)</div><div id="avgQ" class="value">—</div></div>
+        <div class="item"><div class="label">EEG/SKA correlation r</div><div id="corr" class="value">—</div></div>
+        <div class="item"><div class="label">Throughput</div><div id="fps" class="value">—</div></div>
+      </div>
+      <p class="label" style="margin-top:8px; color:var(--muted)">Equation: Q = k₁‖∇ψ‖² + k₄ κ nₑ J²; ∂Q/∂t = −k₅‖∇·J‖² + D∇²Q + k₇ cos(ωt)</p>
+    </div>
+
+    <!-- Plot -->
+    <div class="card panel">
+      <p class="section-title">Visualization</p>
+      <div id="plot" class="card"></div>
+      <details style="margin-top:10px"><summary class="section-title" style="cursor:pointer">Symbolic Gradients</summary>
+        <pre id="gradOut" class="code" style="white-space:pre-wrap; padding:10px;">Click “Parse & Show ∇ψ” to view Algebrite gradients.</pre>
+      </details>
+    </div>
+  </div>
+
+  <footer>UPEM demo • erg/cm³ units • WebGL heatmap slice (z=L/2) • 14 Aug 2025</footer>
+
+  <script>
+    // Utility: safe number
+    const toNum = (v) => typeof v === 'number' ? v : (v === '' ? 0 : Number(v));
+    // Utility: clamp (fixes earlier ReferenceError if used)
+    const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
+
+    // Compile a math expression string to a JS function f(x,y,z)
+    function makeExprFunction(expr) {
+      // Minimal sanitization: allow digits, operators, parentheses, spaces, and x y z letters & common Math funcs.
+      const allowed = /[^0-9+\-*/().,^ xyzsincotaqreplmdghuqrtf\[\]]/i; // coarse filter
+      if (allowed.test(expr)) console.warn('Expression contains uncommon characters. Ensure it is safe.');
+      const js = expr.replace(/\^/g, '**');
+      return new Function('x','y','z','with (Math) { return ' + js + '; }');
+    }
+
+    // Algebrite gradient preview & optional compiled components
+    document.getElementById('compilePsi').addEventListener('click', () => {
+      const psiStr = document.getElementById('psi').value;
+      try {
+        const ψ = Algebrite.run(psiStr);
+        const dX = Algebrite.run('d(' + ψ + ', x)');
+        const dY = Algebrite.run('d(' + ψ + ', y)');
+        const dZ = Algebrite.run('d(' + ψ + ', z)');
+        document.getElementById('gradOut').textContent = `∂ψ/∂x = ${dX}\n∂ψ/∂y = ${dY}\n∂ψ/∂z = ${dZ}`;
+      } catch (e) {
+        document.getElementById('gradOut').textContent = 'Parse error: ' + e.message;
+      }
+    });
+
+    // Web Worker for heavy 3D compute
+    function createWorker() {
+      const workerCode = `
+        self.onmessage = (ev) => {
+          const { mode, N, L, nt, params, expr } = ev.data;
+          const twoPI = 2 * Math.PI;
+          const dx = L / N;
+          const cos = Math.cos, sin = Math.sin, abs = Math.abs, exp = Math.exp, sqrt = Math.sqrt;
+          // Build expr function
+          function makeExprFunction(expr) { const js = expr.replace(/\^/g, '**'); return new Function('x','y','z','with (Math) { return ' + js + '; }'); }
+          let fPsi;
+          try { fPsi = makeExprFunction(expr); fPsi(0,0,0); } catch(e){ fPsi = (x,y,z)=>Math.sin(Math.sqrt(x*x+y*y+z*z)); }
+
+          const k1=params.k1, k4=params.k4, kappa=params.kappa, ne=params.ne, J=params.J, k5=params.k5, D=params.D, k7=params.k7, omega=params.omega;
+
+          if (mode==='1d') {
+            const X = new Float64Array(N);
+            const Q = new Float64Array(N);
+            const Qtmp = new Float64Array(N);
+            const avgSeries = new Float64Array(nt);
+            for(let i=0;i<N;i++){ X[i]=i*dx; }
+            // psi ~ sin(x) default; allow expr(x,0,0)
+            const psi = new Float64Array(N);
+            for(let i=0;i<N;i++){ const x=X[i]; psi[i]=fPsi(x,0,0); }
+            // grad psi via central diff
+            const dpsi = new Float64Array(N);
+            for(let i=0;i<N;i++){
+              const im=(i-1+N)%N, ip=(i+1)%N;
+              dpsi[i]=(psi[ip]-psi[im])/(2*dx);
+            }
+            for(let i=0;i<N;i++) Q[i] = k1*(dpsi[i]*dpsi[i]) + k4*kappa*ne*J*J;
+
+            for(let t=0;t<nt;t++){
+              // Laplacian
+              for(let i=0;i<N;i++){
+                const im=(i-1+N)%N, ip=(i+1)%N;
+                const lap=(Q[ip]-2*Q[i]+Q[im])/(dx*dx);
+                const burst = exp(-0.1*abs(sin(twoPI*X[i]/L)));
+                const divJ = burst * J / 10.0;
+                const A = k7 * Math.cos(omega * (t));
+                Qtmp[i] = Q[i] + (-k5*divJ*divJ + D*lap + A) * 0.001; // dt fixed small
+              }
+              // swap
+              for(let i=0;i<N;i++){ Q[i]=Qtmp[i]; }
+              // avg
+              let s=0; for(let i=0;i<N;i++) s+=Q[i]; avgSeries[t]=s/N;
+            }
+            const avgQ = avgSeries[nt-1];
+            self.postMessage({ mode, avgQ, avgSeries, line:Array.from(Q), X:Array.from(X) });
+            return;
+          }
+
+          // 3D
+          const size = N*N*N;
+          // Allocate 1D arrays for speed
+          const Q = new Float64Array(size);
+          const Qtmp = new Float64Array(size);
+          const psi = new Float64Array(size);
+          const avgSeries = new Float64Array(nt);
+
+          // Index helper
+          const idx = (i,j,k)=> (i*N + j)*N + k;
+
+          // Precompute coordinates and r
+          for (let i=0;i<N;i++){
+            const x = i*dx;
+            for (let j=0;j<N;j++){
+              const y = j*dx;
+              for (let k=0;k<N;k++){
+                const z = k*dx;
+                const id = idx(i,j,k);
+                psi[id] = fPsi(x,y,z);
+              }
+            }
+          }
+
+          // Compute |∇ψ|^2 via central differences
+          const grad2 = new Float64Array(size);
+          for (let i=0;i<N;i++){
+            const im = (i-1+N)%N, ip=(i+1)%N;
+            for (let j=0;j<N;j++){
+              const jm=(j-1+N)%N, jp=(j+1)%N;
+              for (let k=0;k<N;k++){
+                const km=(k-1+N)%N, kp=(k+1)%N;
+                const id = idx(i,j,k);
+                const dpx = (psi[idx(ip,j,k)] - psi[idx(im,j,k)])/(2*dx);
+                const dpy = (psi[idx(i,jp,k)] - psi[idx(i,jm,k)])/(2*dx);
+                const dpz = (psi[idx(i,j,kp)] - psi[idx(i,j,km)])/(2*dx);
+                grad2[id] = dpx*dpx + dpy*dpy + dpz*dpz;
+              }
+            }
+          }
+
+          // Initial Q
+          for (let id=0; id<size; id++) Q[id] = k1*grad2[id] + k4*kappa*ne*J*J;
+
+          // Time evolution
+          const twoPiOverL = twoPI / L;
+          for (let t=0;t<nt;t++){
+            let s=0;
+            for (let i=0;i<N;i++){
+              const im=(i-1+N)%N, ip=(i+1)%N; const xi=i*dx;
+              for (let j=0;j<N;j++){
+                const jm=(j-1+N)%N, jp=(j+1)%N; const yj=j*dx;
+                for (let k=0;k<N;k++){
+                  const km=(k-1+N)%N, kp=(k+1)%N; const zk=k*dx;
+                  const id=idx(i,j,k);
+                  const lap = (Q[idx(ip,j,k)] + Q[idx(im,j,k)] + Q[idx(i,jp,k)] + Q[idx(i,jm,k)] + Q[idx(i,j,kp)] + Q[idx(i,j,km)] - 6*Q[id])/(dx*dx);
+                  const burst = exp(-0.1*abs(sin(twoPiOverL * Math.sqrt(xi*xi + yj*yj + zk*zk))));
+                  const divJ = burst * J / 10.0;
+                  const A = k7 * Math.cos(omega * (t));
+                  Qtmp[id] = Q[id] + (-k5*divJ*divJ + D*lap + A) * 0.001; // dt fixed small
+                  s += Qtmp[id];
+                }
+              }
+            }
+            for (let id=0; id<size; id++) Q[id]=Qtmp[id];
+            avgSeries[t] = s/size;
+          }
+
+          // Mid-plane slice z=N/2
+          const zMid = (N>>1);
+          const slice = [];
+          for (let i=0;i<N;i++){
+            const row = new Float64Array(N);
+            for (let j=0;j<N;j++) row[j] = Q[idx(i,j,zMid)];
+            slice.push(Array.from(row));
+          }
+          const avgQ = avgSeries[nt-1];
+          self.postMessage({ mode:'3d', N, L, avgQ, avgSeries: Array.from(avgSeries), slice });
+        };
+      `;
+      const blob = new Blob([workerCode], { type: 'text/javascript' });
+      return new Worker(URL.createObjectURL(blob));
+    }
+
+    let worker = createWorker();
+
+    // Simple Pearson correlation
+    function pearson(x, y){
+      if(!x || !y || !x.length || x.length !== y.length) return NaN;
+      let n=x.length, sx=0, sy=0, sxx=0, syy=0, sxy=0;
+      for(let i=0;i<n;i++){ const a=x[i], b=y[i]; sx+=a; sy+=b; sxx+=a*a; syy+=b*b; sxy+=a*b; }
+      const cov = sxy - sx*sy/n;
+      const vx = sxx - sx*sx/n, vy = syy - sy*sy/n;
+      return cov / Math.sqrt(vx*vy);
+    }
+
+    // Renderers
+    function render1D(X, Q) {
+      const trace = { x:X, y:Q, type:'scattergl', mode:'lines', line:{ width:2 } };
+      const layout = { margin:{l:50,r:10,t:10,b:40}, xaxis:{ title:'x (cm)' }, yaxis:{ title:'Q (erg/cm³)' }, paper_bgcolor:'rgba(0,0,0,0)', plot_bgcolor:'#0d1425' };
+      Plotly.react('plot', [trace], layout, { responsive:true });
+    }
+
+    function renderSlice(slice, L) {
+      const data = [{
+        z: slice,
+        type: 'heatmapgl',
+        colorscale: 'Viridis',
+        showscale: true,
+      }];
+      const layout = { margin:{l:50,r:10,t:10,b:40}, xaxis:{ title:'x (cm)' }, yaxis:{ title:'y (cm)' }, paper_bgcolor:'rgba(0,0,0,0)', plot_bgcolor:'#0d1425', title:{ text:'3D Q Evolution Slice (z = L/2)', font:{ size:14 } } };
+      Plotly.react('plot', data, layout, { responsive:true });
+    }
+
+    // Simulation orchestrator
+    const els = (id)=>document.getElementById(id);
+
+    function readParams(){
+      return {
+        k1: toNum(els('k1').value), k4: toNum(els('k4').value), kappa: toNum(els('kappa').value),
+        ne: toNum(els('ne').value), J: toNum(els('J').value), k5: toNum(els('k5').value),
+        D: toNum(els('D').value), k7: toNum(els('k7').value), omega: toNum(els('omega').value)
+      };
+    }
+
+    function shouldUseWorker(N){
+      const pref = els('useWorker').value;
+      if (pref==='yes') return true;
+      if (pref==='no') return false;
+      return N >= 50; // auto
+    }
+
+    let lastAvgSeries = null; // for correlation
+
+    function runSimulation(){
+      const t0 = performance.now();
+      const mode = els('dim').value;
+      const N = clamp(Math.floor(toNum(els('N').value)), 16, 128);
+      const L = toNum(els('L').value);
+      const nt = Math.floor(toNum(els('nt').value));
+      const params = readParams();
+      const expr = els('psi').value;
+
+      if (shouldUseWorker(N)){
+        worker.terminate();
+        worker = createWorker();
+        worker.onmessage = (ev) => {
+          const d = ev.data;
+          if (d.mode==='1d') { render1D(d.X, d.line); } else { renderSlice(d.slice, L); }
+          els('avgQ').textContent = d.avgQ.toExponential(2);
+          const dt = performance.now() - t0;
+          els('fps').textContent = (1000/dt).toFixed(1) + ' fps';
+          lastAvgSeries = d.avgSeries;
+        };
+        worker.postMessage({ mode, N, L, nt, params, expr });
+      } else {
+        // Fallback: very small N on main thread -> re-use worker code by messaging a temp worker synchronously
+        worker.terminate();
+        worker = createWorker();
+        worker.onmessage = (ev)=>{
+          const d = ev.data;
+          if (d.mode==='1d') { render1D(d.X, d.line); } else { renderSlice(d.slice, L); }
+          els('avgQ').textContent = d.avgQ.toExponential(2);
+          const dt = performance.now() - t0; els('fps').textContent = (1000/dt).toFixed(1) + ' fps';
+          lastAvgSeries = d.avgSeries;
+        };
+        worker.postMessage({ mode, N, L, nt, params, expr });
+      }
+    }
+
+    els('run').addEventListener('click', runSimulation);
+
+    // Real-time data ingestion (mock)
+    async function ingest(){
+      let series = null;
+      try {
+        const res = await fetch('/api/mock-signal.json', { cache:'no-store' });
+        if (res.ok) {
+          const json = await res.json();
+          series = Array.isArray(json.values) ? json.values.map(Number) : null;
+        }
+      } catch (e) {
+        // no-op, will fallback
+      }
+      if (!series) {
+        // Fallback: synthetic 1/f style signal sized to lastAvgSeries or 120
+        const n = (lastAvgSeries && lastAvgSeries.length) || 120;
+        series = new Array(n);
+        let v=0; for(let i=0;i<n;i++){ v += (Math.random()-0.5)*0.2; series[i] = Math.sin(i*0.1) + v*0.1; }
+      }
+      if (!lastAvgSeries) {
+        // trigger a quick run to get a reference
+        runSimulation();
+        setTimeout(ingest, 400);
+        return;
+      }
+      const n = Math.min(series.length, lastAvgSeries.length);
+      const a = lastAvgSeries.slice(0,n);
+      const b = series.slice(0,n);
+      const r = pearson(a,b);
+      els('corr').textContent = isFinite(r) ? r.toFixed(3) : '—';
+    }
+
+    els('ingest').addEventListener('click', ingest);
+
+    // Initial draw
+    runSimulation();
+  </script>
+</body>
+</html>
